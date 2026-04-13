@@ -190,3 +190,72 @@ class TestSaveLoad:
             assert len(entry["positions"]) == 2
         finally:
             os.unlink(tmp_path)
+
+    def test_page_lengths_roundtrip(self):
+        """page_lengths must survive a save/load cycle."""
+        indexer = Indexer()
+        indexer.build({"http://example.com/": make_html("one two three")})
+        expected_len = indexer.page_lengths["http://example.com/"]
+        assert expected_len > 0
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            indexer.save(tmp_path)
+            fresh = Indexer()
+            fresh.load(tmp_path)
+            assert fresh.page_lengths["http://example.com/"] == expected_len
+        finally:
+            os.unlink(tmp_path)
+
+    def test_page_lengths_key_not_in_index_after_load(self):
+        """The __page_lengths__ sentinel key must not leak into self.index."""
+        indexer = Indexer()
+        indexer.build({"http://example.com/": make_html("hello")})
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            indexer.save(tmp_path)
+            fresh = Indexer()
+            fresh.load(tmp_path)
+            assert "__page_lengths__" not in fresh.index
+        finally:
+            os.unlink(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# page_lengths population
+# ---------------------------------------------------------------------------
+
+
+class TestPageLengths:
+    def test_populated_after_build(self):
+        indexer = Indexer()
+        indexer.build({"http://example.com/": make_html("a b c")})
+        assert "http://example.com/" in indexer.page_lengths
+        assert indexer.page_lengths["http://example.com/"] == 3
+
+    def test_reset_on_rebuild(self):
+        indexer = Indexer()
+        indexer.build({"http://a.com/": make_html("x y z")})
+        indexer.build({"http://b.com/": make_html("p q")})
+        # After second build, only the new URL should be present
+        assert "http://a.com/" not in indexer.page_lengths
+        assert "http://b.com/" in indexer.page_lengths
+
+    def test_multiple_pages_all_recorded(self):
+        indexer = Indexer()
+        indexer.build({
+            "http://example.com/1": make_html("a b c"),
+            "http://example.com/2": make_html("d e"),
+        })
+        assert "http://example.com/1" in indexer.page_lengths
+        assert "http://example.com/2" in indexer.page_lengths
+
+    def test_empty_page_recorded_as_zero(self):
+        indexer = Indexer()
+        indexer.build({"http://example.com/": "<html></html>"})
+        assert indexer.page_lengths["http://example.com/"] == 0
