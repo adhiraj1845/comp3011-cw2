@@ -186,3 +186,84 @@ class TestFindMultiWord:
         s = Search(sample_index)
         results = s.find("cat cat")
         assert "http://example.com/1" in results
+
+
+# ---------------------------------------------------------------------------
+# TF-IDF scoring
+# ---------------------------------------------------------------------------
+
+
+class TestTFIDFScore:
+    """Tests for the _tfidf_score helper and TF-IDF-based ranking in find()."""
+
+    @pytest.fixture()
+    def tfidf_index(self):
+        """Three-page index designed to exercise TF-IDF ranking.
+
+        'rare' appears in page/1 and page/2 only (df=2, N=3 → IDF > 0).
+        page/2 is much shorter than page/1, so its TF is higher and its
+        TF-IDF score should therefore be higher.
+
+        'common' appears in all three pages (df=N → IDF=0), which tests
+        the IDF down-weighting of ubiquitous terms.
+        """
+        index = {
+            "rare": {
+                "http://example.com/1": {"frequency": 1, "positions": [0]},
+                "http://example.com/2": {"frequency": 1, "positions": [0]},
+            },
+            "common": {
+                "http://example.com/1": {"frequency": 5, "positions": [1, 2, 3, 4, 5]},
+                "http://example.com/2": {"frequency": 1, "positions": [1]},
+                "http://example.com/3": {"frequency": 2, "positions": [0, 1]},
+            },
+        }
+        # N=3 total pages; 'rare' is absent from page/3, so IDF = log(3/2) > 0
+        page_lengths = {
+            "http://example.com/1": 100,
+            "http://example.com/2": 5,
+            "http://example.com/3": 20,
+        }
+        return index, page_lengths
+
+    def test_tfidf_score_higher_for_shorter_doc(self, tfidf_index):
+        index, page_lengths = tfidf_index
+        s = Search(index, page_lengths)
+        score1 = s._tfidf_score(["rare"], "http://example.com/1")
+        score2 = s._tfidf_score(["rare"], "http://example.com/2")
+        # page/2 is shorter → higher TF → higher TF-IDF
+        assert score2 > score1
+
+    def test_tfidf_score_zero_for_unknown_url(self, tfidf_index):
+        index, page_lengths = tfidf_index
+        s = Search(index, page_lengths)
+        assert s._tfidf_score(["rare"], "http://example.com/unknown") == 0.0
+
+    def test_tfidf_score_zero_for_unknown_word(self, tfidf_index):
+        index, page_lengths = tfidf_index
+        s = Search(index, page_lengths)
+        assert s._tfidf_score(["zzz"], "http://example.com/1") == 0.0
+
+    def test_find_uses_tfidf_when_page_lengths_provided(self, tfidf_index):
+        index, page_lengths = tfidf_index
+        s = Search(index, page_lengths)
+        results = s.find("rare")
+        # page/2 should rank first because of its higher TF-IDF score
+        assert results[0] == "http://example.com/2"
+
+    def test_find_falls_back_to_frequency_without_page_lengths(self, tfidf_index):
+        index, _ = tfidf_index
+        # Inject page_lengths for page/1 only so page/2 has no length data
+        # and the fallback (raw frequency) path is exercised.
+        s = Search(index)  # no page_lengths
+        results = s.find("rare")
+        # Both pages have the same frequency (1), so order is arbitrary,
+        # but the call must succeed and return both pages.
+        assert set(results) == {"http://example.com/1", "http://example.com/2"}
+
+    def test_tfidf_idf_downweights_common_terms(self, tfidf_index):
+        """A word appearing in every document has IDF = log(N/N) = 0."""
+        index, page_lengths = tfidf_index
+        s = Search(index, page_lengths)
+        # 'common' appears in both pages → df == N → IDF == 0
+        assert s._tfidf_score(["common"], "http://example.com/1") == 0.0
