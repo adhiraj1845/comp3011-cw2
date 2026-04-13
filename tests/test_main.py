@@ -188,3 +188,123 @@ class TestCmdBuild:
             with patch("src.main.INDEX_PATH", tmp_index):
                 _cmd_build(indexer)
             assert tmp_index.exists()
+
+    @patch("src.main.Crawler")
+    def test_build_passes_page_lengths_to_search(self, MockCrawler):
+        """Search returned by _cmd_build must carry page_lengths for TF-IDF."""
+        instance = MockCrawler.return_value
+        instance.crawl.return_value = {
+            "http://example.com/": "<html><body>hello world</body></html>"
+        }
+        indexer = Indexer()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_index = Path(tmpdir) / "index.json"
+            with patch("src.main.INDEX_PATH", tmp_index):
+                result = _cmd_build(indexer)
+        assert result.page_lengths != {}
+
+    def test_load_passes_page_lengths_to_search(self):
+        """Search returned by _cmd_load must carry page_lengths for TF-IDF."""
+        indexer = Indexer()
+        indexer.build({"http://example.com/": "<html><body>hello</body></html>"})
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_index = Path(tmpdir) / "index.json"
+            indexer.save(tmp_index)
+            with patch("src.main.INDEX_PATH", tmp_index):
+                result = _cmd_load(Indexer())
+        assert result is not None
+        assert result.page_lengths != {}
+
+
+# ---------------------------------------------------------------------------
+# run_shell — REPL loop
+# ---------------------------------------------------------------------------
+
+
+from src.main import run_shell  # noqa: E402
+
+
+class TestRunShell:
+    """Integration tests for the interactive REPL in run_shell()."""
+
+    @patch("builtins.input", side_effect=["quit"])
+    def test_quit_exits_with_goodbye(self, _mock, capsys):
+        run_shell()
+        assert "Goodbye" in capsys.readouterr().out
+
+    @patch("builtins.input", side_effect=["exit"])
+    def test_exit_exits_with_goodbye(self, _mock, capsys):
+        run_shell()
+        assert "Goodbye" in capsys.readouterr().out
+
+    @patch("builtins.input", side_effect=EOFError)
+    def test_eof_exits_gracefully(self, _mock, capsys):
+        run_shell()
+        assert "Exiting" in capsys.readouterr().out
+
+    @patch("builtins.input", side_effect=KeyboardInterrupt)
+    def test_keyboard_interrupt_exits_gracefully(self, _mock, capsys):
+        run_shell()
+        assert "Exiting" in capsys.readouterr().out
+
+    @patch("builtins.input", side_effect=["", "  ", "quit"])
+    def test_empty_input_lines_are_skipped(self, _mock, capsys):
+        run_shell()
+        out = capsys.readouterr().out
+        assert "Goodbye" in out
+
+    @patch("builtins.input", side_effect=["help", "quit"])
+    def test_help_prints_docstring(self, _mock, capsys):
+        run_shell()
+        out = capsys.readouterr().out
+        # The module-level docstring lists all commands
+        assert "build" in out
+
+    @patch("builtins.input", side_effect=["foobar", "quit"])
+    def test_unknown_command_reports_error(self, _mock, capsys):
+        run_shell()
+        assert "Unknown command" in capsys.readouterr().out
+
+    @patch("src.main._cmd_build")
+    @patch("builtins.input", side_effect=["build", "quit"])
+    def test_build_command_calls_handler(self, _mock_input, mock_build, capsys):
+        mock_build.return_value = MagicMock()
+        run_shell()
+        mock_build.assert_called_once()
+
+    @patch("src.main._cmd_load")
+    @patch("builtins.input", side_effect=["load", "quit"])
+    def test_load_command_calls_handler(self, _mock_input, mock_load, capsys):
+        mock_load.return_value = None
+        run_shell()
+        mock_load.assert_called_once()
+
+    @patch("builtins.input", side_effect=["print hello", "quit"])
+    def test_print_command_with_no_index_warns(self, _mock, capsys):
+        run_shell()
+        assert "No index loaded" in capsys.readouterr().out
+
+    @patch("builtins.input", side_effect=["find world", "quit"])
+    def test_find_command_with_no_index_warns(self, _mock, capsys):
+        run_shell()
+        assert "No index loaded" in capsys.readouterr().out
+
+    @patch("src.main._cmd_build")
+    @patch("builtins.input", side_effect=["build", "print hello", "quit"])
+    def test_print_command_after_build(self, _mock_input, mock_build, capsys):
+        """After a successful build, print dispatches to the search object."""
+        fake_search = MagicMock()
+        fake_search.print_word.return_value = None
+        mock_build.return_value = fake_search
+        run_shell()
+        fake_search.print_word.assert_called_once_with("hello")
+
+    @patch("src.main._cmd_build")
+    @patch("builtins.input", side_effect=["build", "find good friends", "quit"])
+    def test_find_command_after_build(self, _mock_input, mock_build, capsys):
+        """After a successful build, find dispatches to the search object."""
+        fake_search = MagicMock()
+        fake_search.find.return_value = []
+        mock_build.return_value = fake_search
+        run_shell()
+        fake_search.find.assert_called_once_with("good friends")

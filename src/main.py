@@ -31,7 +31,7 @@ def _cmd_build(indexer: Indexer) -> Search:
     indexer.build(pages)
     indexer.save(INDEX_PATH)
     print(f"Index saved to {INDEX_PATH}  ({len(indexer.index)} unique words).")
-    return Search(indexer.index)
+    return Search(indexer.index, indexer.page_lengths)
 
 
 def _cmd_load(indexer: Indexer) -> Search | None:
@@ -41,7 +41,7 @@ def _cmd_load(indexer: Indexer) -> Search | None:
         return None
     indexer.load(INDEX_PATH)
     print(f"Index loaded from {INDEX_PATH}  ({len(indexer.index)} unique words).")
-    return Search(indexer.index)
+    return Search(indexer.index, indexer.page_lengths)
 
 
 def _cmd_print(search: Search | None, word: str) -> None:
