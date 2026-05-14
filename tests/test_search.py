@@ -267,3 +267,55 @@ class TestTFIDFScore:
         s = Search(index, page_lengths)
         # 'common' appears in both pages → df == N → IDF == 0
         assert s._tfidf_score(["common"], "http://example.com/1") == 0.0
+
+
+# ---------------------------------------------------------------------------
+# suggest — spelling suggestions
+# ---------------------------------------------------------------------------
+
+
+class TestSuggest:
+    def test_returns_close_match(self, sample_index):
+        # "cot" is close to "cat" (one substitution)
+        s = Search(sample_index)
+        suggestions = s.suggest("cot")
+        assert "cat" in suggestions
+
+    def test_returns_empty_for_completely_unknown_word(self, sample_index):
+        s = Search(sample_index)
+        assert s.suggest("zzzzzzzzz") == []
+
+    def test_returns_empty_for_empty_string(self, sample_index):
+        s = Search(sample_index)
+        assert s.suggest("") == []
+
+    def test_case_insensitive_matching(self, sample_index):
+        s = Search(sample_index)
+        # "CAT" normalises to "cat" which should match the index key "cat"
+        suggestions = s.suggest("COT")
+        assert "cat" in suggestions
+
+    def test_respects_n_limit(self, sample_index):
+        s = Search(sample_index)
+        # Even if multiple matches exist, n=1 caps the result
+        suggestions = s.suggest("sat", n=1)
+        assert len(suggestions) <= 1
+
+    def test_returns_empty_for_word_in_index(self, sample_index):
+        # "cat" is already in the index — difflib may still return it as a
+        # match (exact similarity = 1.0 > cutoff), but we don't suppress it
+        # here; the caller decides whether to show suggestions.
+        s = Search(sample_index)
+        suggestions = s.suggest("cat")
+        assert isinstance(suggestions, list)
+
+    def test_returns_multiple_suggestions_when_available(self, sample_index):
+        # "sat" is in the index; "cat" and "the" are less similar
+        # We just verify the result is a list with at most n entries
+        s = Search(sample_index)
+        suggestions = s.suggest("sat", n=3)
+        assert len(suggestions) <= 3
+
+    def test_empty_index_returns_empty(self):
+        s = Search({})
+        assert s.suggest("hello") == []

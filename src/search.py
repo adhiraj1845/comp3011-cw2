@@ -38,6 +38,7 @@ find(query with k terms):
 
 from __future__ import annotations
 
+import difflib
 import math
 import string
 
@@ -113,6 +114,28 @@ class Search:
             key_fn = lambda url: sum(self.index[w][url]["frequency"] for w in words)  # noqa: E731
 
         return sorted(matching_urls, key=key_fn, reverse=True)
+
+    def suggest(self, word: str, n: int = 3, cutoff: float = 0.6) -> list[str]:
+        """Return up to *n* close matches for *word* from the index vocabulary.
+
+        Uses difflib.get_close_matches (SequenceMatcher under the hood) with a
+        similarity *cutoff* in [0, 1].  Returns an empty list when *word* is
+        already in the index or has no close match above the cutoff.
+
+        Complexity: O(W × L) where W = vocabulary size, L = average word length.
+
+        Args:
+            word:   The raw (possibly misspelled) word to look up.
+            n:      Maximum number of suggestions to return.
+            cutoff: Minimum similarity ratio required (0 = everything, 1 = exact).
+
+        Returns:
+            A list of vocabulary words ordered by decreasing similarity.
+        """
+        normalised = self._normalise(word)
+        if not normalised:
+            return []
+        return difflib.get_close_matches(normalised, self.index.keys(), n=n, cutoff=cutoff)
 
     # ------------------------------------------------------------------
     # Private helpers

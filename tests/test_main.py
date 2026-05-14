@@ -100,9 +100,21 @@ class TestCmdFind:
         # Only page that has both "hello" and "world"
         assert "http://example.com/" in out
 
-    def test_unknown_query_reports_no_pages(self, index_and_search, capsys):
+    def test_unknown_word_reports_not_found(self, index_and_search, capsys):
+        # "zzz" is not in the index and has no close matches → "not found"
         _, search = index_and_search
         _cmd_find(search, "zzz")
+        out = capsys.readouterr().out
+        assert "not found" in out
+
+    def test_all_words_in_index_no_intersection_shows_no_pages(self, capsys):
+        # Both words exist in the index but on separate pages → no intersection
+        index = {
+            "alpha": {"http://example.com/1": {"frequency": 1, "positions": [0]}},
+            "beta":  {"http://example.com/2": {"frequency": 1, "positions": [0]}},
+        }
+        search = Search(index)
+        _cmd_find(search, "alpha beta")
         out = capsys.readouterr().out
         assert "No pages found" in out
 
@@ -116,6 +128,27 @@ class TestCmdFind:
         _cmd_find(None, "hello")
         out = capsys.readouterr().out
         assert "No index loaded" in out
+
+    def test_misspelled_word_shows_suggestion_in_find(self, capsys):
+        # "helo" is close to "hello" — suggestion should appear
+        index = {
+            "hello": {"http://example.com/": {"frequency": 1, "positions": [0]}},
+        }
+        search = Search(index)
+        _cmd_find(search, "helo")
+        out = capsys.readouterr().out
+        assert "did you mean" in out.lower()
+        assert "hello" in out
+
+    def test_misspelled_word_shows_suggestion_in_print(self, capsys):
+        index = {
+            "hello": {"http://example.com/": {"frequency": 1, "positions": [0]}},
+        }
+        search = Search(index)
+        _cmd_print(search, "helo")
+        out = capsys.readouterr().out
+        assert "did you mean" in out.lower()
+        assert "hello" in out
 
 
 # ---------------------------------------------------------------------------

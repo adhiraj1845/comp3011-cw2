@@ -55,7 +55,11 @@ def _cmd_print(search: Search | None, word: str) -> None:
 
     entry = search.print_word(word)
     if entry is None:
-        print(f"'{word}' not found in the index.")
+        suggestions = search.suggest(word)
+        if suggestions:
+            print(f"'{word}' not found. Did you mean: {', '.join(suggestions)}?")
+        else:
+            print(f"'{word}' not found in the index.")
         return
 
     print(f"\nIndex entry for '{word.lower()}':")
@@ -78,7 +82,19 @@ def _cmd_find(search: Search | None, query: str) -> None:
 
     results = search.find(query)
     if not results:
-        print(f"No pages found for query: '{query}'")
+        # Check whether any individual words are absent from the index.
+        # If so, offer spelling suggestions; otherwise all words exist but
+        # no page contains every one of them simultaneously.
+        absent = [w for w in query.split() if search._normalise(w) not in search.index]
+        if absent:
+            for w in absent:
+                suggestions = search.suggest(w)
+                if suggestions:
+                    print(f"  '{w}' not found — did you mean: {', '.join(suggestions)}?")
+                else:
+                    print(f"  '{w}' not found in the index.")
+        else:
+            print(f"No pages found for query: '{query}'")
         return
 
     words = query.strip().split()
