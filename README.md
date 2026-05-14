@@ -66,7 +66,7 @@ comp3011-cw2/
 ## Installation
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/Adhiraj1845/comp3011-cw2
 cd comp3011-cw2
 pip install -r requirements.txt
 ```
@@ -90,7 +90,10 @@ python src/main.py
 | `build` | Crawl quotes.toscrape.com, build the inverted index, save to `data/index.json` |
 | `load` | Load a previously built index from `data/index.json` |
 | `print <word>` | Print the full inverted index entry for a word (all URLs, frequencies, positions) |
-| `find <query>` | Return all pages containing **every** word in the query, ranked by TF-IDF |
+| `find <query>` | AND search — pages containing **every** word in the query, ranked by TF-IDF |
+| `find "<phrase>"` | Exact-phrase search — pages where the words appear consecutively (use double quotes) |
+| `find <pat*ern>` | Wildcard search — expand `*` against the vocabulary before intersecting page sets |
+| `stats` | Show corpus statistics: pages indexed, vocabulary size, top 10 most frequent words |
 | `help` | Display the command reference |
 | `quit` / `exit` | Exit the shell |
 
@@ -114,6 +117,27 @@ Found 1 page(s) containing word 'indifference':
 Found 2 page(s) containing words 'good friends':
   https://quotes.toscrape.com/page/1/
   https://quotes.toscrape.com/page/7/
+
+> find "good friends"
+Found 1 page(s) containing phrase "good friends":
+  https://quotes.toscrape.com/page/1/
+
+> find cour*
+Found 3 page(s) matching wildcard 'cour*':
+  https://quotes.toscrape.com/page/2/
+  ...
+
+> stats
+
+Corpus statistics
+  Pages indexed   : 112
+  Unique words    : 2,847
+  Total tokens    : 34,210
+  Avg page length : 305 tokens
+
+  Top 10 most frequent words:
+    the                   4821 occurrences
+    ...
 ```
 
 ---
@@ -176,7 +200,10 @@ do not appear in the index.
 |---|---|---|
 | `Indexer.build()` | O(T) | T = total tokens across all pages |
 | `Indexer.save()` / `load()` | O(W) | W = unique words in index |
-| `Search.find()` k-word query | O(k·D + R log R) | D = avg posting list length, R = result count |
+| `Search.find()` k-word query | O(k·D + R log R) | D = avg posting list, R = result count |
+| `Search.find_phrase()` k-word | O(k·D + C·P) | C = AND-candidates, P = positions of word[0] |
+| `Search.find_wildcard()` | O(k·W + R log R) | W = vocabulary size |
+| `Search.suggest()` | O(W·L) | L = average word length |
 | `Search.print_word()` | O(1) | Single dict lookup |
 
 ---

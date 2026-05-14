@@ -1,17 +1,26 @@
 """
 search.py — Query interface for the inverted index.
 
-Provides two operations:
-
+Public API
+----------
 print_word(word)
     Returns the raw inverted index entry for a single word, showing
     every page URL, its word frequency, and all positions.
 
 find(query)
-    Accepts one or more space-separated words and returns the set of
-    page URLs that contain *all* of the query terms (AND semantics).
-    Results are ranked by TF-IDF score (descending) when page_lengths
-    is available, otherwise by combined raw frequency.
+    AND search: pages containing *all* words in *query*, ranked by TF-IDF.
+
+find_phrase(phrase)
+    Exact-phrase search: pages where all words appear consecutively in
+    the given order, exploiting the position lists stored in the index.
+
+find_wildcard(query)
+    Wildcard search: tokens may contain '*' (matches any character
+    sequence).  Each wildcard token is expanded against the vocabulary
+    and the resulting page sets are AND-intersected across tokens.
+
+suggest(word)
+    Spelling suggestions from the index vocabulary using fuzzy matching.
 
 Ranking algorithm — TF-IDF
 ---------------------------
@@ -27,24 +36,24 @@ producing more relevant rankings than raw frequency alone.
 
 Complexity
 ----------
-find(query with k terms):
-  - Intersection: O(k × |posting_list|)  — we intersect sets, each
-    set lookup is O(1) average.
-  - Scoring: O(|results| × k)  — one multiply-add per (doc, term) pair.
-  - Sorting: O(|results| × log|results|)
-  Overall: O(k × D + R log R) where D = avg posting list size,
-           R = number of matching results.
+find(k terms):          O(k·D + R log R)  D = avg posting list, R = results
+find_phrase(k terms):   O(k·D + C·P)      C = AND-candidates, P = positions of word[0]
+find_wildcard(k terms): O(k·W + R log R)  W = vocabulary size
+suggest(word):          O(W·L)            L = average word length
 """
 
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import math
 import string
 
 from src.indexer import Index
 
-_STRIP_CHARS = string.punctuation + "\u2018\u2019\u201c\u201d"
+_STRIP_CHARS = string.punctuation + "‘’“”"
+# Identical to _STRIP_CHARS but preserves '*' so wildcard tokens survive cleaning.
+_WILDCARD_STRIP_CHARS = _STRIP_CHARS.replace("*", "")
 
 
 class Search:
@@ -80,9 +89,8 @@ class Search:
     def find(self, query: str) -> list[str]:
         """Return URLs that contain every word in *query* (AND semantics).
 
-        Results are sorted by the sum of per-word frequencies on each
-        matching page, descending — so pages that use the query terms
-        most often come first.
+        Results are ranked by TF-IDF when page_lengths is available,
+        otherwise by combined raw frequency (descending).
 
         Args:
             query: A whitespace-separated string of one or more words.
@@ -114,6 +122,91 @@ class Search:
             key_fn = lambda url: sum(self.index[w][url]["frequency"] for w in words)  # noqa: E731
 
         return sorted(matching_urls, key=key_fn, reverse=True)
+
+    def find_phrase(self, phrase: str) -> list[str]:
+        """Return URLs where all words in *phrase* appear as a consecutive sequence.
+
+        Uses the position lists already stored in the index — no re-fetching
+        needed.  For a k-word phrase, we check that word[i] appears at
+        position (start + i) for each i, where *start* iterates over the
+        positions of word[0] on each candidate page.
+
+        Single-word phrases delegate to find() since ordering is irrelevant.
+
+        Args:
+            phrase: A whitespace-separated string of words forming the phrase.
+
+        Returns:
+            A (possibly empty) list of URL strings ranked by TF-IDF / frequency.
+        """
+        words = self._parse_query(phrase)
+        if not words:
+            return []
+        if len(words) == 1:
+            return self.find(phrase)
+
+        # AND-intersect first to prune the candidate set cheaply.
+        candidates: set[str] | None = None
+        for word in words:
+            pages = set(self.index.get(word, {}).keys())
+            candidates = pages if candidates is None else candidates & pages
+
+        if not candidates:
+            return []
+
+        results: list[str] = []
+        for url in candidates:
+            positions_first = self.index[words[0]][url]["positions"]
+            for start in positions_first:
+                if all(
+                    (start + i) in set(self.index[words[i]][url]["positions"])
+                    for i in range(1, len(words))
+                ):
+                    results.append(url)
+                    break
+
+        if self.page_lengths:
+            return sorted(results, key=lambda url: self._tfidf_score(words, url), reverse=True)
+        return sorted(results, key=lambda url: sum(self.index[w][url]["frequency"] for w in words), reverse=True)
+
+    def find_wildcard(self, query: str) -> list[str]:
+        """Return URLs matching *query* where tokens may contain '*' wildcards.
+
+        Each token containing '*' is expanded to all vocabulary words that
+        match the pattern (via fnmatch), and the union of their page sets is
+        computed.  The per-token page sets are then AND-intersected so that
+        every token must match at least one word on the returned page.
+
+        Tokens without '*' behave like a standard AND-find lookup.
+
+        Example:
+            ``find_wildcard("cour* fri*")``  →  pages containing any word
+            starting with "cour" AND any word starting with "fri".
+
+        Args:
+            query: A whitespace-separated string; tokens may contain '*'.
+
+        Returns:
+            A (possibly empty) sorted list of URL strings.
+        """
+        raw_tokens = [t.lower().strip(_WILDCARD_STRIP_CHARS) for t in query.split()]
+        tokens = [t for t in raw_tokens if t]
+        if not tokens:
+            return []
+
+        matching_urls: set[str] | None = None
+        for token in tokens:
+            if "*" in token:
+                matched_words = [w for w in self.index if fnmatch.fnmatch(w, token)]
+                pages: set[str] = set()
+                for word in matched_words:
+                    pages |= set(self.index[word].keys())
+            else:
+                pages = set(self.index.get(token, {}).keys())
+
+            matching_urls = pages if matching_urls is None else matching_urls & pages
+
+        return sorted(matching_urls or [])
 
     def suggest(self, word: str, n: int = 3, cutoff: float = 0.6) -> list[str]:
         """Return up to *n* close matches for *word* from the index vocabulary.

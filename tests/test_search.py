@@ -319,3 +319,136 @@ class TestSuggest:
     def test_empty_index_returns_empty(self):
         s = Search({})
         assert s.suggest("hello") == []
+
+
+# ---------------------------------------------------------------------------
+# find_phrase — exact consecutive-position search
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def phrase_index():
+    """Index for a two-page corpus with known token positions."""
+    return {
+        "the": {
+            "http://example.com/1": {"frequency": 2, "positions": [0, 4]},
+            "http://example.com/2": {"frequency": 1, "positions": [3]},
+        },
+        "cat": {
+            "http://example.com/1": {"frequency": 1, "positions": [1]},
+            "http://example.com/2": {"frequency": 1, "positions": [0]},
+        },
+        "sat": {
+            "http://example.com/1": {"frequency": 1, "positions": [2]},
+        },
+        "mat": {
+            "http://example.com/1": {"frequency": 1, "positions": [3]},
+            "http://example.com/2": {"frequency": 1, "positions": [1]},
+        },
+    }
+    # page/1 text order: the cat sat mat the …
+    # page/2 text order: cat mat … the …
+
+
+class TestFindPhrase:
+    def test_finds_consecutive_phrase(self, phrase_index):
+        s = Search(phrase_index)
+        # "the cat" → page/1 has "the" at 0 and "cat" at 1 (consecutive)
+        assert "http://example.com/1" in s.find_phrase("the cat")
+
+    def test_rejects_non_consecutive_order(self, phrase_index):
+        s = Search(phrase_index)
+        # "cat the" is not consecutive on either page
+        assert s.find_phrase("cat the") == []
+
+    def test_three_word_phrase(self, phrase_index):
+        s = Search(phrase_index)
+        # "the cat sat" only on page/1 (positions 0,1,2)
+        results = s.find_phrase("the cat sat")
+        assert results == ["http://example.com/1"]
+
+    def test_single_word_delegates_to_find(self, phrase_index):
+        s = Search(phrase_index)
+        # Single word: same result as find()
+        assert s.find_phrase("cat") == s.find("cat")
+
+    def test_empty_phrase_returns_empty(self, phrase_index):
+        s = Search(phrase_index)
+        assert s.find_phrase("") == []
+
+    def test_phrase_not_in_index_returns_empty(self, phrase_index):
+        s = Search(phrase_index)
+        assert s.find_phrase("the dog") == []
+
+    def test_phrase_across_pages(self, phrase_index):
+        s = Search(phrase_index)
+        # "cat mat" consecutive on page/2 (positions 0,1) but NOT on page/1 (1,3 — gap)
+        results = s.find_phrase("cat mat")
+        assert "http://example.com/2" in results
+        assert "http://example.com/1" not in results
+
+    def test_case_insensitive(self, phrase_index):
+        s = Search(phrase_index)
+        assert s.find_phrase("THE CAT") == s.find_phrase("the cat")
+
+
+# ---------------------------------------------------------------------------
+# find_wildcard — '*' pattern expansion
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def wildcard_index():
+    return {
+        "courage":   {"http://example.com/1": {"frequency": 2, "positions": [0, 5]}},
+        "course":    {"http://example.com/1": {"frequency": 1, "positions": [1]},
+                      "http://example.com/2": {"frequency": 1, "positions": [0]}},
+        "court":     {"http://example.com/2": {"frequency": 1, "positions": [1]}},
+        "friends":   {"http://example.com/1": {"frequency": 1, "positions": [2]},
+                      "http://example.com/2": {"frequency": 1, "positions": [2]}},
+        "freedom":   {"http://example.com/3": {"frequency": 1, "positions": [0]}},
+    }
+
+
+class TestFindWildcard:
+    def test_prefix_wildcard_matches_multiple_words(self, wildcard_index):
+        s = Search(wildcard_index)
+        # "cour*" should match courage, course, court
+        results = s.find_wildcard("cour*")
+        assert "http://example.com/1" in results
+        assert "http://example.com/2" in results
+
+    def test_wildcard_and_plain_token_intersection(self, wildcard_index):
+        s = Search(wildcard_index)
+        # "cour* friends" → pages with a cour* word AND "friends"
+        results = s.find_wildcard("cour* friends")
+        assert "http://example.com/1" in results
+        assert "http://example.com/2" in results
+        assert "http://example.com/3" not in results
+
+    def test_no_match_returns_empty(self, wildcard_index):
+        s = Search(wildcard_index)
+        assert s.find_wildcard("zzz*") == []
+
+    def test_empty_query_returns_empty(self, wildcard_index):
+        s = Search(wildcard_index)
+        assert s.find_wildcard("") == []
+
+    def test_exact_word_without_wildcard(self, wildcard_index):
+        s = Search(wildcard_index)
+        # Token without '*' works like regular find
+        results = s.find_wildcard("friends")
+        assert "http://example.com/1" in results
+        assert "http://example.com/2" in results
+
+    def test_wildcard_only_pages_that_have_all_tokens(self, wildcard_index):
+        s = Search(wildcard_index)
+        # "fre*" matches "freedom" (only page/3); "friends" not on page/3 → empty
+        results = s.find_wildcard("fre* friends")
+        assert results == []
+
+    def test_star_alone_matches_everything(self, wildcard_index):
+        s = Search(wildcard_index)
+        # "*" matches every vocabulary word → union = all pages
+        results = s.find_wildcard("*")
+        assert set(results) == {"http://example.com/1", "http://example.com/2", "http://example.com/3"}

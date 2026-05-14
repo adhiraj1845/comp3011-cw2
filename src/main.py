@@ -3,13 +3,19 @@ main.py — Interactive command-line shell for the search engine.
 
 Commands
 --------
-build           Crawl quotes.toscrape.com, build the inverted index,
-                and save it to data/index.json.
-load            Load a previously built index from data/index.json.
-print <word>    Show the inverted index entry for a single word.
-find <query>    List all pages containing every word in the query.
-help            Show this help message.
-quit / exit     Exit the shell.
+build                  Crawl quotes.toscrape.com, build the inverted index,
+                       and save it to data/index.json.
+load                   Load a previously built index from data/index.json.
+print <word>           Show the inverted index entry for a single word.
+find <query>           AND search — pages containing every word in the query,
+                       ranked by TF-IDF.
+find "<phrase>"        Exact-phrase search — pages where the words appear
+                       consecutively (wrap the phrase in double quotes).
+find <pat*ern>         Wildcard search — expand '*' against the vocabulary
+                       before intersecting page sets.
+stats                  Show corpus statistics (pages, vocabulary, top words).
+help                   Show this help message.
+quit / exit            Exit the shell.
 """
 
 import json
@@ -72,14 +78,38 @@ def _cmd_print(search: Search | None, word: str) -> None:
 
 
 def _cmd_find(search: Search | None, query: str) -> None:
-    """Print all pages containing every word in *query*."""
+    """Dispatch to phrase, wildcard, or AND search based on query syntax."""
     if search is None:
         print("No index loaded. Use 'build' or 'load' first.")
         return
     if not query.strip():
-        print("Usage: find <word> [word …]")
+        print('Usage: find <word> [word …]  |  find "<exact phrase>"  |  find <pat*ern>')
         return
 
+    # --- Exact-phrase search (query wrapped in double quotes) ---
+    if query.startswith('"') and query.endswith('"') and len(query) > 2:
+        phrase = query[1:-1].strip()
+        results = search.find_phrase(phrase)
+        if not results:
+            print(f"No pages found for phrase: {query}")
+        else:
+            print(f"\nFound {len(results)} page(s) containing phrase {query}:")
+            for url in results:
+                print(f"  {url}")
+        return
+
+    # --- Wildcard search (any token contains '*') ---
+    if "*" in query:
+        results = search.find_wildcard(query)
+        if not results:
+            print(f"No pages found for wildcard query: '{query}'")
+        else:
+            print(f"\nFound {len(results)} page(s) matching wildcard '{query}':")
+            for url in results:
+                print(f"  {url}")
+        return
+
+    # --- Standard AND search ---
     results = search.find(query)
     if not results:
         # Check whether any individual words are absent from the index.
@@ -102,6 +132,34 @@ def _cmd_find(search: Search | None, query: str) -> None:
     print(f"\nFound {len(results)} page(s) containing {label} '{query.strip()}':")
     for url in results:
         print(f"  {url}")
+
+
+def _cmd_stats(search: Search | None) -> None:
+    """Print corpus statistics derived from the loaded index."""
+    if search is None:
+        print("No index loaded. Use 'build' or 'load' first.")
+        return
+
+    vocab_size = len(search.index)
+    page_count = len(search.page_lengths)
+    total_tokens = sum(search.page_lengths.values())
+    avg_len = total_tokens / page_count if page_count else 0
+
+    # Total occurrences of each word across all pages.
+    word_totals: dict[str, int] = {
+        word: sum(v["frequency"] for v in pages.values())
+        for word, pages in search.index.items()
+    }
+    top_words = sorted(word_totals, key=word_totals.__getitem__, reverse=True)[:10]
+
+    print(f"\nCorpus statistics")
+    print(f"  Pages indexed   : {page_count}")
+    print(f"  Unique words    : {vocab_size:,}")
+    print(f"  Total tokens    : {total_tokens:,}")
+    print(f"  Avg page length : {avg_len:.0f} tokens")
+    print(f"\n  Top 10 most frequent words:")
+    for word in top_words:
+        print(f"    {word:<20} {word_totals[word]:>6} occurrences")
 
 
 def run_shell() -> None:
@@ -136,6 +194,9 @@ def run_shell() -> None:
 
         elif cmd == "find":
             _cmd_find(search, arg)
+
+        elif cmd == "stats":
+            _cmd_stats(search)
 
         elif cmd == "help":
             print(__doc__)

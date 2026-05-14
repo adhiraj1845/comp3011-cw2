@@ -20,6 +20,7 @@ from src.main import (
     _cmd_find,
     _cmd_load,
     _cmd_print,
+    _cmd_stats,
 )
 from src.search import Search
 
@@ -149,6 +150,108 @@ class TestCmdFind:
         out = capsys.readouterr().out
         assert "did you mean" in out.lower()
         assert "hello" in out
+
+
+# ---------------------------------------------------------------------------
+# _cmd_find — phrase and wildcard modes
+# ---------------------------------------------------------------------------
+
+
+class TestCmdFindPhrase:
+    def test_phrase_search_finds_consecutive_words(self, capsys):
+        index = {
+            "good": {"http://example.com/1": {"frequency": 1, "positions": [0]}},
+            "friends": {"http://example.com/1": {"frequency": 1, "positions": [1]}},
+        }
+        search = Search(index)
+        _cmd_find(search, '"good friends"')
+        out = capsys.readouterr().out
+        assert "http://example.com/1" in out
+
+    def test_phrase_search_no_result(self, capsys):
+        index = {
+            "good": {"http://example.com/1": {"frequency": 1, "positions": [0]}},
+            "friends": {"http://example.com/1": {"frequency": 1, "positions": [5]}},
+        }
+        search = Search(index)
+        _cmd_find(search, '"good friends"')
+        out = capsys.readouterr().out
+        assert "No pages found" in out
+
+    def test_phrase_search_no_index(self, capsys):
+        _cmd_find(None, '"good friends"')
+        out = capsys.readouterr().out
+        assert "No index loaded" in out
+
+
+class TestCmdFindWildcard:
+    def test_wildcard_find_returns_matches(self, capsys):
+        index = {
+            "courage": {"http://example.com/1": {"frequency": 1, "positions": [0]}},
+            "course":  {"http://example.com/2": {"frequency": 1, "positions": [0]}},
+        }
+        search = Search(index)
+        _cmd_find(search, "cour*")
+        out = capsys.readouterr().out
+        assert "http://example.com/1" in out
+        assert "http://example.com/2" in out
+
+    def test_wildcard_no_match(self, capsys):
+        index = {
+            "hello": {"http://example.com/1": {"frequency": 1, "positions": [0]}},
+        }
+        search = Search(index)
+        _cmd_find(search, "zzz*")
+        out = capsys.readouterr().out
+        assert "No pages found" in out
+
+    def test_wildcard_no_index(self, capsys):
+        _cmd_find(None, "cour*")
+        out = capsys.readouterr().out
+        assert "No index loaded" in out
+
+
+# ---------------------------------------------------------------------------
+# _cmd_stats
+# ---------------------------------------------------------------------------
+
+
+class TestCmdStats:
+    def test_stats_shows_page_count(self, index_and_search, capsys):
+        _, search = index_and_search
+        _cmd_stats(search)
+        out = capsys.readouterr().out
+        assert "Pages indexed" in out
+
+    def test_stats_shows_vocab_size(self, index_and_search, capsys):
+        _, search = index_and_search
+        _cmd_stats(search)
+        out = capsys.readouterr().out
+        assert "Unique words" in out
+
+    def test_stats_shows_top_words(self, index_and_search, capsys):
+        _, search = index_and_search
+        _cmd_stats(search)
+        out = capsys.readouterr().out
+        assert "Top 10" in out
+
+    def test_stats_no_index_warns(self, capsys):
+        _cmd_stats(None)
+        out = capsys.readouterr().out
+        assert "No index loaded" in out
+
+    def test_stats_correct_page_count(self, capsys):
+        index = {
+            "hello": {
+                "http://example.com/1": {"frequency": 1, "positions": [0]},
+                "http://example.com/2": {"frequency": 1, "positions": [0]},
+            }
+        }
+        page_lengths = {"http://example.com/1": 10, "http://example.com/2": 20}
+        search = Search(index, page_lengths)
+        _cmd_stats(search)
+        out = capsys.readouterr().out
+        assert "2" in out  # 2 pages
 
 
 # ---------------------------------------------------------------------------
@@ -341,3 +444,8 @@ class TestRunShell:
         mock_build.return_value = fake_search
         run_shell()
         fake_search.find.assert_called_once_with("good friends")
+
+    @patch("builtins.input", side_effect=["stats", "quit"])
+    def test_stats_command_with_no_index_warns(self, _mock, capsys):
+        run_shell()
+        assert "No index loaded" in capsys.readouterr().out
